@@ -115,6 +115,39 @@ void init_cache()
       c1.set_contents[i] = 0;
     }
     c1.contents = 0;
+  } else{ /* split cache, c1 for instructions using cache_isize, and c2 for data using cache_dsize*/
+
+    /* Instruction cache */
+    c1.size = cache_isize;
+    c1.associativity = cache_assoc;
+    c1.n_sets = cache_isize / (cache_assoc * cache_block_size);
+    c1.index_mask_offset = (int)LOG2(cache_block_size);
+    c1.index_mask = (c1.n_sets - 1) << c1.index_mask_offset;
+    c1.LRU_head = (Pcache_line *)malloc(sizeof(Pcache_line) * c1.n_sets);
+    c1.LRU_tail = (Pcache_line *)malloc(sizeof(Pcache_line) * c1.n_sets);
+    c1.set_contents = (int *)malloc(sizeof(int) * c1.n_sets); 
+    for (int i = 0; i < c1.n_sets; i++) {
+      c1.LRU_head[i] = NULL;  
+      c1.LRU_tail[i] = NULL;
+      c1.set_contents[i] = 0;
+    }
+    c1.contents = 0;
+
+    /* Data cache*/
+    c2.size = cache_dsize;
+    c2.associativity = cache_assoc;
+    c2.n_sets = cache_dsize / (cache_assoc * cache_block_size);
+    c2.index_mask_offset = (int)LOG2(cache_block_size);
+    c2.index_mask = (c2.n_sets - 1) << c2.index_mask_offset;
+    c2.LRU_head = (Pcache_line *)malloc(sizeof(Pcache_line) * c2.n_sets);
+    c2.LRU_tail = (Pcache_line *)malloc(sizeof(Pcache_line) * c2.n_sets);
+    c2.set_contents = (int *)malloc(sizeof(int) * c2.n_sets); 
+    for (int i = 0; i < c2.n_sets; i++) {
+      c2.LRU_head[i] = NULL;  
+      c2.LRU_tail[i] = NULL;
+      c2.set_contents[i] = 0;
+    }
+    c2.contents = 0;
   }
 
 }
@@ -124,131 +157,233 @@ void init_cache()
 void perform_access(addr, access_type)
   unsigned addr, access_type;
 {
-  unsigned words_in_block = c1.size > 0 ? (unsigned)(cache_block_size / WORD_SIZE) : 0;
-  /* handle an access to the cache */
-  /* register access to corresponding cache type */
-  if(access_type == TRACE_INST_LOAD){
-    cache_stat_inst.accesses++;
-  } else {
-    cache_stat_data.accesses++;
-  }
 
-  /* get the tag, index and offset from the trace*/
-  unsigned tag = addr >> (c1.index_mask_offset + LOG2(c1.n_sets));
-  unsigned index = (addr & c1.index_mask) >> c1.index_mask_offset;
-  unsigned offset = addr & (cache_block_size - 1);
+  unsigned words_in_block;
 
-  if(c1.associativity == 1){
-    Pcache_line line = c1.LRU_head[index]; /* search our cache by index and store result in hit line*/
-    if (line != NULL && line -> tag == tag) { /* cache hit */
-      if(access_type == TRACE_DATA_STORE){
-        line -> dirty = 1;
-      }
-      delete(&c1.LRU_head[index], &c1.LRU_tail[index], line); /* refresh LRU (not necessary here)*/
-      insert(&c1.LRU_head[index], &c1.LRU_tail[index], line);
+  if(cache_split == FALSE){ /* Unified cache case */
+
+    words_in_block = c1.size > 0 ? (unsigned)(cache_block_size / WORD_SIZE) : 0;
+    /* handle an access to the cache */
+    /* register access to corresponding cache type */
+    if(access_type == TRACE_INST_LOAD){
+      cache_stat_inst.accesses++;
     } else {
-      if(access_type == TRACE_INST_LOAD){ /* record miss */
-        cache_stat_inst.misses++;
-        cache_stat_inst.demand_fetches += words_in_block;
-      } else {
-        cache_stat_data.misses++;
-        cache_stat_data.demand_fetches += words_in_block;
-      }
-
-      if (line != NULL) {
-        if (line->dirty == 1) {
-          if (access_type == TRACE_INST_LOAD)
-            cache_stat_inst.copies_back += words_in_block;
-          else{
-            cache_stat_data.copies_back += words_in_block;
-          }
-        }
-        if (access_type == TRACE_INST_LOAD){
-          cache_stat_inst.replacements++;
-        }
-        else{
-          cache_stat_data.replacements++;
-        }
-        delete(&c1.LRU_head[index], &c1.LRU_tail[index], line);
-        free(line);
-      }  
-      Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
-      new_line->tag = tag;
-      new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
-      new_line->LRU_next = NULL;
-      new_line->LRU_prev = NULL;
-      insert(&c1.LRU_head[index], &c1.LRU_tail[index], new_line);
-      c1.set_contents[index] = 1;
-    }
-  }else{ /* when associativity is > 1*/
-    Pcache_line line = c1.LRU_head[index]; /* search our cache by index and store result in hit line*/
-    Pcache_line hit_line = NULL; /* This will take place of line in case of hit while looping through the set*/
-  
-    while(line != NULL){
-      if(line -> tag == tag){
-        hit_line = line;
-        break;
-      }
-      line = line -> LRU_next;
+      cache_stat_data.accesses++;
     }
   
-    if (hit_line != NULL) { /* cache hit */
-      if(access_type == TRACE_DATA_STORE){
-        hit_line -> dirty = 1;
-      }
-      /* Refresh LRU */
-      delete(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line);
-      insert(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line);
-    } else { /* cache miss */
-      if(access_type == TRACE_INST_LOAD){ /* record miss */
-        cache_stat_inst.misses++;
-        cache_stat_inst.demand_fetches += words_in_block;
+    /* get the tag, index and offset from the trace*/
+    unsigned tag = addr >> (c1.index_mask_offset + LOG2(c1.n_sets));
+    unsigned index = (addr & c1.index_mask) >> c1.index_mask_offset;
+    unsigned offset = addr & (cache_block_size - 1);
+  
+    if(c1.associativity == 1){
+      Pcache_line line = c1.LRU_head[index]; /* search our cache by index and store result in hit line*/
+      if (line != NULL && line -> tag == tag) { /* cache hit */
+        if(access_type == TRACE_DATA_STORE){
+          line -> dirty = 1;
+        }
+        delete(&c1.LRU_head[index], &c1.LRU_tail[index], line); /* refresh LRU (not necessary here)*/
+        insert(&c1.LRU_head[index], &c1.LRU_tail[index], line);
       } else {
-        cache_stat_data.misses++;
-        cache_stat_data.demand_fetches += words_in_block;
-      }
-
-      /* Checking if the set is full */
-      if(c1.set_contents[index] >= c1.associativity){
-        /* if there's anything not null we must evict it and add the new, also in this case we can use the head to evict */
-        Pcache_line victim = c1.LRU_head[index];
-        if(victim != NULL){
-          if(victim -> dirty == 1){
-            cache_stat_data.copies_back += words_in_block;
+        if(access_type == TRACE_INST_LOAD){ /* record miss */
+          cache_stat_inst.misses++;
+          cache_stat_inst.demand_fetches += words_in_block;
+        } else {
+          cache_stat_data.misses++;
+          cache_stat_data.demand_fetches += words_in_block;
+        }
+  
+        if (line != NULL) {
+          if (line->dirty == 1) {
+            if (access_type == TRACE_INST_LOAD)
+              cache_stat_inst.copies_back += words_in_block;
+            else{
+              cache_stat_data.copies_back += words_in_block;
+            }
           }
-          if (access_type == TRACE_INST_LOAD) {
+          if (access_type == TRACE_INST_LOAD){
             cache_stat_inst.replacements++;
-          } else {
+          }
+          else{
             cache_stat_data.replacements++;
           }
-      
-          delete(&c1.LRU_head[index], &c1.LRU_tail[index], victim);
-          free(victim);
-        }
-      } else {
-        c1.set_contents[index]++;
+          delete(&c1.LRU_head[index], &c1.LRU_tail[index], line);
+          free(line);
+        }  
+        Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
+        new_line->tag = tag;
+        new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
+        new_line->LRU_next = NULL;
+        new_line->LRU_prev = NULL;
+        insert(&c1.LRU_head[index], &c1.LRU_tail[index], new_line);
+        c1.set_contents[index] = 1;
       }
+    }else{ /* when associativity is > 1*/
+      Pcache_line line = c1.LRU_head[index]; /* search our cache by index and store result in hit line*/
+      Pcache_line hit_line = NULL; /* This will take place of line in case of hit while looping through the set*/
+    
+      while(line != NULL){
+        if(line -> tag == tag){
+          hit_line = line;
+          break;
+        }
+        line = line -> LRU_next;
+      }
+    
+      if (hit_line != NULL) { /* cache hit */
+        if(access_type == TRACE_DATA_STORE){
+          hit_line -> dirty = 1;
+        }
+        /* Refresh LRU */
+        delete(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line);
+        insert(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line);
+      } else { /* cache miss */
+        if(access_type == TRACE_INST_LOAD){ /* record miss */
+          cache_stat_inst.misses++;
+          cache_stat_inst.demand_fetches += words_in_block;
+        } else {
+          cache_stat_data.misses++;
+          cache_stat_data.demand_fetches += words_in_block;
+        }
+  
+        /* Checking if the set is full */
+        if(c1.set_contents[index] >= c1.associativity){
+          /* if there's anything not null we must evict it and add the new, also in this case we can use the head to evict */
+          Pcache_line victim = c1.LRU_head[index];
+          if(victim != NULL){
+            if(victim -> dirty == 1){
+              cache_stat_data.copies_back += words_in_block;
+            }
+            if (access_type == TRACE_INST_LOAD) {
+              cache_stat_inst.replacements++;
+            } else {
+              cache_stat_data.replacements++;
+            }
+        
+            delete(&c1.LRU_head[index], &c1.LRU_tail[index], victim);
+            free(victim);
+          }
+        } else {
+          c1.set_contents[index]++;
+        }
+  
+        Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
+        new_line->tag = tag;
+        new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
+        new_line->LRU_next = NULL;
+        new_line->LRU_prev = NULL;
+        insert(&c1.LRU_head[index], &c1.LRU_tail[index], new_line);
+      }
+    }
+  } else {
+    cache *target;
+    cache_stat *target_stat;
+    unsigned local_block_size = cache_block_size;
 
-      Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
-      new_line->tag = tag;
-      new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
-      new_line->LRU_next = NULL;
-      new_line->LRU_prev = NULL;
-      insert(&c1.LRU_head[index], &c1.LRU_tail[index], new_line);
+    if(access_type == TRACE_INST_LOAD){
+      target = &c1; // Instruction cache
+      target_stat = &cache_stat_inst;
+    } else {
+      target = &c2;  // Data cache
+      target_stat = &cache_stat_data;
+    }
+
+    words_in_block = local_block_size / WORD_SIZE;
+    target_stat -> accesses++;
+
+    unsigned tag = addr >> (target->index_mask_offset + LOG2(target->n_sets));
+    unsigned index = (addr & target->index_mask) >> target->index_mask_offset;
+
+    if(target->associativity == 1){ /* direct mapped split cache*/
+      Pcache_line line = target->LRU_head[index];
+      if (line != NULL && line->tag == tag) {
+          if (access_type == TRACE_DATA_STORE)
+              line->dirty = 1;
+          delete(&target->LRU_head[index], &target->LRU_tail[index], line);
+          insert(&target->LRU_head[index], &target->LRU_tail[index], line);
+      } else {
+          if (access_type == TRACE_INST_LOAD) {
+              target_stat->misses++;
+              target_stat->demand_fetches += words_in_block;
+          } else {
+              target_stat->misses++;
+              target_stat->demand_fetches += words_in_block;
+          }
+          if (line != NULL) {
+              if (line->dirty)
+                  target_stat->copies_back += words_in_block;
+              if (access_type == TRACE_INST_LOAD)
+                  target_stat->replacements++;
+              else
+                  target_stat->replacements++;
+              delete(&target->LRU_head[index], &target->LRU_tail[index], line);
+              free(line);
+          }
+          Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
+          new_line->tag = tag;
+          new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
+          new_line->LRU_next = NULL;
+          new_line->LRU_prev = NULL;
+          insert(&target->LRU_head[index], &target->LRU_tail[index], new_line);
+          target->set_contents[index] = 1;
+      }
+    } else { /* set associative split cache */
+      Pcache_line curr = target->LRU_head[index];
+      Pcache_line hit_line = NULL;
+      while (curr != NULL) {
+          if (curr->tag == tag) {
+              hit_line = curr;
+              break;
+          }
+          curr = curr->LRU_next;
+      }
+      if (hit_line != NULL) {
+          if (access_type == TRACE_DATA_STORE)
+              hit_line->dirty = 1;
+          delete(&target->LRU_head[index], &target->LRU_tail[index], hit_line);
+          insert(&target->LRU_head[index], &target->LRU_tail[index], hit_line);
+      } else {
+          if (access_type == TRACE_INST_LOAD) {
+              target_stat->misses++;
+              target_stat->demand_fetches += words_in_block;
+          } else {
+              target_stat->misses++;
+              target_stat->demand_fetches += words_in_block;
+          }
+          if (target->set_contents[index] >= target->associativity) {
+              Pcache_line victim = target->LRU_tail[index];
+              if (victim != NULL) {
+                  if (victim->dirty)
+                      target_stat->copies_back += words_in_block;
+                  target_stat->replacements++;
+                  delete(&target->LRU_head[index], &target->LRU_tail[index], victim);
+                  free(victim);
+                  // Set count remains unchanged.
+              }
+          } else {
+              target->set_contents[index]++;
+          }
+          Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
+          new_line->tag = tag;
+          new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
+          new_line->LRU_next = NULL;
+          new_line->LRU_prev = NULL;
+          insert(&target->LRU_head[index], &target->LRU_tail[index], new_line);
+      }
     }
   }
 
-  
+
 }
 /************************************************************/
 
 /************************************************************/
 void flush()
 {
+  unsigned words_in_block = c1.size > 0 ? (unsigned)(cache_block_size / WORD_SIZE) : 0;
 
   /* flush the cache */
   if(cache_split == 0){ /* for unified case flush remaining dirty bits and record statistic of copies back, also clean cache*/
-    unsigned words_in_block = c1.size > 0 ? (unsigned)(cache_block_size / WORD_SIZE) : 0;
     for(int i = 0; i< c1.n_sets; i++){
       Pcache_line current = c1.LRU_head[i];
       while(current != NULL){
@@ -263,6 +398,39 @@ void flush()
       c1.LRU_tail[i] = NULL;
       c1.set_contents[i] = 0;
     }
+  } else { /* split mode */
+    for (int i = 0; i < c1.n_sets; i++) {
+      Pcache_line current = c1.LRU_head[i];
+      while (current != NULL) {
+          if (current->dirty == 1) {
+              // For unified cache, we previously used cache_stat_data.
+              cache_stat_data.copies_back += words_in_block;
+          }
+          Pcache_line temp = current;
+          current = current->LRU_next;
+          free(temp);
+      }
+      c1.LRU_head[i] = NULL;
+      c1.LRU_tail[i] = NULL;
+      c1.set_contents[i] = 0;
+    }
+
+    for (int i = 0; i < c2.n_sets; i++) {
+      Pcache_line current = c2.LRU_head[i];
+      while (current != NULL) {
+          if (current->dirty == 1) {
+              // For unified cache, we previously used cache_stat_data.
+              cache_stat_data.copies_back += words_in_block;
+          }
+          Pcache_line temp = current;
+          current = current->LRU_next;
+          free(temp);
+      }
+      c2.LRU_head[i] = NULL;
+      c2.LRU_tail[i] = NULL;
+      c2.set_contents[i] = 0;
+    }
+      
   }
 }
 /************************************************************/
