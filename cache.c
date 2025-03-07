@@ -124,6 +124,7 @@ void init_cache()
 void perform_access(addr, access_type)
   unsigned addr, access_type;
 {
+  unsigned words_in_block = c1.size > 0 ? (unsigned)(cache_block_size / WORD_SIZE) : 0;
   /* handle an access to the cache */
   /* register access to corresponding cache type */
   if(access_type == TRACE_INST_LOAD){
@@ -138,74 +139,106 @@ void perform_access(addr, access_type)
   unsigned offset = addr & (cache_block_size - 1);
 
   if(c1.associativity == 1){
-
-  }else{
-
-  }
-
-  Pcache_line line = c1.LRU_head[index]; /* search our cache by index and store result in hit line*/
-  Pcache_line hit_line = NULL; /* This will take place of line in case of hit while looping through the set*/
-
-  while(line != NULL){
-    if(line -> tag == tag){
-      hit_line = line;
-      break;
-    }
-    line = line -> LRU_next;
-  }
-
-  /* in a direct cache the set can only have one line */
-  if (hit_line != NULL) { /* cache hit */
-    if(access_type == TRACE_DATA_STORE){
-      hit_line -> dirty = 1;
-    }
-    delete(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line); /* refresh LRU (not necessary here)*/
-    insert(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line);
-  } else { /* cache miss */
-    if(access_type == TRACE_INST_LOAD){ /* record miss */
-      cache_stat_inst.misses++;
-    } else {
-      cache_stat_data.misses++;
-    }
-
-    /* get the fetches in words and prevent 0 division*/
-    unsigned words_in_block = c1.size > 0 ? (unsigned)(cache_block_size / WORD_SIZE) : 0;
-    if (access_type == TRACE_INST_LOAD){
-      cache_stat_inst.demand_fetches += words_in_block;
-    } else {
-      cache_stat_data.demand_fetches += words_in_block;
-    }
-
-    /* if there's anything not null we must evict it and add the new, also in this case we can use the head to evict */
-    Pcache_line victim = c1.LRU_head[index];
-    if(victim != NULL){
-      if(victim -> dirty == 1){
-        cache_stat_data.copies_back += words_in_block;
+    Pcache_line line = c1.LRU_head[index]; /* search our cache by index and store result in hit line*/
+    if (line != NULL && line -> tag == tag) { /* cache hit */
+      if(access_type == TRACE_DATA_STORE){
+        line -> dirty = 1;
       }
-      if (access_type == TRACE_INST_LOAD) {
-        cache_stat_inst.replacements++;
+      delete(&c1.LRU_head[index], &c1.LRU_tail[index], line); /* refresh LRU (not necessary here)*/
+      insert(&c1.LRU_head[index], &c1.LRU_tail[index], line);
+    } else {
+      if(access_type == TRACE_INST_LOAD){ /* record miss */
+        cache_stat_inst.misses++;
+        cache_stat_inst.demand_fetches += words_in_block;
       } else {
-        cache_stat_data.replacements++;
+        cache_stat_data.misses++;
+        cache_stat_data.demand_fetches += words_in_block;
       }
+
+      if (line != NULL) {
+        if (line->dirty == 1) {
+          if (access_type == TRACE_INST_LOAD)
+            cache_stat_inst.copies_back += words_in_block;
+          else{
+            cache_stat_data.copies_back += words_in_block;
+          }
+        }
+        if (access_type == TRACE_INST_LOAD){
+          cache_stat_inst.replacements++;
+        }
+        else{
+          cache_stat_data.replacements++;
+        }
+        delete(&c1.LRU_head[index], &c1.LRU_tail[index], line);
+        free(line);
+      }  
+      Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
+      new_line->tag = tag;
+      new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
+      new_line->LRU_next = NULL;
+      new_line->LRU_prev = NULL;
+      insert(&c1.LRU_head[index], &c1.LRU_tail[index], new_line);
+      c1.set_contents[index] = 1;
+    }
+  }else{ /* when associativity is > 1*/
+    Pcache_line line = c1.LRU_head[index]; /* search our cache by index and store result in hit line*/
+    Pcache_line hit_line = NULL; /* This will take place of line in case of hit while looping through the set*/
   
-      delete(&c1.LRU_head[index], &c1.LRU_tail[index], victim);
-      free(victim);
+    while(line != NULL){
+      if(line -> tag == tag){
+        hit_line = line;
+        break;
+      }
+      line = line -> LRU_next;
     }
+  
+    if (hit_line != NULL) { /* cache hit */
+      if(access_type == TRACE_DATA_STORE){
+        hit_line -> dirty = 1;
+      }
+      /* Refresh LRU */
+      delete(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line);
+      insert(&c1.LRU_head[index], &c1.LRU_tail[index], hit_line);
+    } else { /* cache miss */
+      if(access_type == TRACE_INST_LOAD){ /* record miss */
+        cache_stat_inst.misses++;
+        cache_stat_inst.demand_fetches += words_in_block;
+      } else {
+        cache_stat_data.misses++;
+        cache_stat_data.demand_fetches += words_in_block;
+      }
 
+      /* Checking if the set is full */
+      if(c1.set_contents[index] >= c1.associativity){
+        /* if there's anything not null we must evict it and add the new, also in this case we can use the head to evict */
+        Pcache_line victim = c1.LRU_head[index];
+        if(victim != NULL){
+          if(victim -> dirty == 1){
+            cache_stat_data.copies_back += words_in_block;
+          }
+          if (access_type == TRACE_INST_LOAD) {
+            cache_stat_inst.replacements++;
+          } else {
+            cache_stat_data.replacements++;
+          }
+      
+          delete(&c1.LRU_head[index], &c1.LRU_tail[index], victim);
+          free(victim);
+        }
+      } else {
+        c1.set_contents[index]++;
+      }
 
-
-    Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
-    new_line->tag = tag;
-    new_line->dirty = 0;
-    new_line->LRU_next = NULL;
-    new_line->LRU_prev = NULL;
-
-    if (access_type == TRACE_DATA_STORE) {
-      new_line->dirty = 1;
+      Pcache_line new_line = (Pcache_line)malloc(sizeof(cache_line));
+      new_line->tag = tag;
+      new_line->dirty = (access_type == TRACE_DATA_STORE) ? 1 : 0;
+      new_line->LRU_next = NULL;
+      new_line->LRU_prev = NULL;
+      insert(&c1.LRU_head[index], &c1.LRU_tail[index], new_line);
     }
-
-    insert(&c1.LRU_head[index], &c1.LRU_tail[index], new_line);
   }
+
+  
 }
 /************************************************************/
 
