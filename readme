@@ -1,0 +1,5 @@
+Para poder usar el proyecto se necesita gcc y Makefile.
+
+Se debe correr la instrucción make clean, seguida de make.
+
+Y se generara el ejecutable llamado simulador.

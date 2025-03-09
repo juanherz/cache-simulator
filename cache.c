@@ -77,13 +77,10 @@ int value;
 void init_cache()
 {
 
-  /* initialize the cache, and cache statistics data structures */
-
-  /* Cache statistics init */
   /* Instruction cache statistics */
-  cache_stat_inst.accesses = 0;       /* number of memory references */
-  cache_stat_inst.misses = 0;         /* number of cache misses */
-  cache_stat_inst.replacements = 0;   /* number of misses that cause replacments */
+  cache_stat_inst.accesses = 0;     /* number of memory references */
+  cache_stat_inst.misses = 0;        /* number of cache misses */
+  cache_stat_inst.replacements = 0;  /* number of misses that cause replacments */
   cache_stat_inst.demand_fetches = 0; /* number of fetches */
   cache_stat_inst.copies_back = 0;    /* number of write backs */
 
@@ -538,7 +535,6 @@ void flush()
       {
         if (cache_writeback && current->dirty == 1)
         {
-          // For unified cache, we previously used cache_stat_data.
           cache_stat_data.copies_back += words_in_block;
         }
         Pcache_line temp = current;
